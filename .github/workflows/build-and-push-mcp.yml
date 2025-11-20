@@ -1,0 +1,99 @@
+name: Build and Push MCP Docker Image
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: build-and-push-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY_HOST: registry.agentsmp.com
+  REGISTRY_NAMESPACE: agentsmp
+  BUILD_CONTEXT: .
+  DOCKERFILE_PATH: ./Dockerfile
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute MCP image name
+        id: imagename
+        shell: bash
+        run: |
+          REPO="${{ github.event.repository.name }}"
+          NS="${{ env.REGISTRY_NAMESPACE }}"
+          REPO_LC="${REPO,,}"
+          IMAGE_NAME="${NS}/${REPO_LC}"
+          IMAGE_REF="${{ env.REGISTRY_HOST }}/${IMAGE_NAME}"
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> "$GITHUB_ENV"
+          echo "IMAGE_REF=${IMAGE_REF}"   >> "$GITHUB_ENV"
+          echo "DOCKER_CONTEXT=default"   >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_HOST }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Extract Docker metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_REF }}
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}},prefix=,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}}.{{minor}},prefix=,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}},prefix=,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,format=short,prefix=main-,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build image (PR only)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: false
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push image
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Show image references
+        if: success() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        run: |
+          echo "Published tags:"
+          echo "${{ steps.meta.outputs.tags }}"
