@@ -103,6 +103,68 @@ async def get_posts_in_subreddit(
         # Return the response
         return response.json()
 
+
+@app.tool
+async def get_weather(
+    city: Annotated[str, "City name (optionally include state/country)"]
+) -> str:
+    """Get current weather for a city using the Open-Meteo API."""
+    query = city.strip()
+    if not query:
+        return "Please provide a city name."
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            geo_resp = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": query, "count": 1},
+            )
+            geo_resp.raise_for_status()
+            geo_data = geo_resp.json()
+            results = geo_data.get("results") or []
+            if not results:
+                return f"Could not find a match for '{query}'."
+
+            loc = results[0]
+            lat = loc.get("latitude")
+            lon = loc.get("longitude")
+            display_name = ", ".join(
+                [
+                    str(part)
+                    for part in [
+                        loc.get("name"),
+                        loc.get("admin1"),
+                        loc.get("country_code"),
+                    ]
+                    if part
+                ]
+            )
+
+            weather_resp = await client.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current_weather": "true",
+                    "timezone": "auto",
+                },
+            )
+            weather_resp.raise_for_status()
+            weather = weather_resp.json().get("current_weather") or {}
+            if not weather:
+                return f"Weather data unavailable for {display_name or query}."
+
+            temp = weather.get("temperature")
+            wind = weather.get("windspeed")
+            time = weather.get("time")
+            code = weather.get("weathercode")
+            return (
+                f"{display_name or query}: {temp}°C, wind {wind} km/h, "
+                f"weather code {code}, observed at {time}."
+            )
+    except Exception as exc:
+        return f"Failed to fetch weather for '{query}': {exc}"
+
 # Run with specific transport
 if __name__ == "__main__":
     # Decide transport/host/port from flags or environment so Docker can bind to 0.0.0.0.
