@@ -3,7 +3,7 @@
 
 import os
 import sys
-from typing import Annotated
+from typing import Annotated, Optional
 
 import httpx
 from arcade_mcp_server import Context, MCPApp, mcp_app as arcade_mcp_app_module
@@ -82,6 +82,60 @@ async def get_posts_in_subreddit(
 
         # Return the response
         return response.json()
+
+
+@app.tool
+async def get_weather(
+    city: Annotated[str, "City name to fetch weather for"],
+    country_code: Annotated[
+        Optional[str], "Optional country code to disambiguate the city"
+    ] = None,
+) -> dict:
+    """
+    Fetch current weather for a city using the Open-Meteo APIs (geocoding + forecast).
+    """
+    query = city.strip()
+    if country_code:
+        query = f"{query},{country_code.strip()}"
+
+    # Geocode the city to lat/lon
+    geocode_url = "https://geocoding-api.open-meteo.com/v1/search"
+    async with httpx.AsyncClient() as client:
+        geocode_resp = await client.get(geocode_url, params={"name": query, "count": 1})
+        geocode_resp.raise_for_status()
+        geocode_data = geocode_resp.json()
+        results = geocode_data.get("results") or []
+        if not results:
+            return {"error": f"Could not find location for '{query}'"}
+        location = results[0]
+        lat = location["latitude"]
+        lon = location["longitude"]
+        name = location.get("name", city)
+        country = location.get("country", country_code or "")
+
+        # Fetch current weather
+        weather_url = "https://api.open-meteo.com/v1/forecast"
+        weather_resp = await client.get(
+            weather_url,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "current_weather": True,
+            },
+        )
+        weather_resp.raise_for_status()
+        weather_data = weather_resp.json()
+
+    current = weather_data.get("current_weather", {})
+    return {
+        "location": {
+            "name": name,
+            "country": country,
+            "latitude": lat,
+            "longitude": lon,
+        },
+        "current_weather": current,
+    }
 
 # Run with specific transport
 if __name__ == "__main__":
