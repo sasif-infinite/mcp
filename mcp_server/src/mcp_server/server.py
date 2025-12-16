@@ -15,9 +15,14 @@ from arcade_mcp_server import types as arcade_mcp_types
 # Temporarily pin protocol to match the UI SDK (sdk supports up to 2025-03-26).
 arcade_mcp_types.LATEST_PROTOCOL_VERSION = "2025-03-26"
 
-# Patch the FastAPI app factory used by MCPApp to inject CORS support for the OAP web UI.
-def create_arcade_mcp_with_cors(*args, **kwargs):
+# Import JWT middleware
+from mcp_server.middleware import JWTAuthMiddleware
+
+# Patch the FastAPI app factory used by MCPApp to inject CORS and JWT support for the OAP web UI.
+def create_arcade_mcp_with_cors_and_jwt(*args, **kwargs):
     fastapi_app = _create_arcade_mcp(*args, **kwargs)
+    
+    # Add CORS middleware first
     fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000"],
@@ -26,10 +31,14 @@ def create_arcade_mcp_with_cors(*args, **kwargs):
         allow_headers=["*"],
         expose_headers=["mcp-session-id"],
     )
+    
+    # Add JWT authentication middleware (excluding /health endpoint)
+    fastapi_app.add_middleware(JWTAuthMiddleware, excluded_paths=["/health"])
+    
     return fastapi_app
 
 
-arcade_mcp_app_module.create_arcade_mcp = create_arcade_mcp_with_cors
+arcade_mcp_app_module.create_arcade_mcp = create_arcade_mcp_with_cors_and_jwt
 
 app = MCPApp(name="mcp_server", version="1.0.0", log_level="DEBUG")
 
