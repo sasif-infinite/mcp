@@ -90,17 +90,26 @@ async def get_weather(
     country_code: Annotated[
         Optional[str], "Optional country code to disambiguate the city"
     ] = None,
+    units: Annotated[
+        str,
+        "Units system: 'metric' (C, m/s) or 'imperial' (F, mph). Defaults to metric.",
+    ] = "metric",
 ) -> dict:
     """
     Fetch current weather for a city using the Open-Meteo APIs (geocoding + forecast).
+    No API key or auth required.
     """
     query = city.strip()
     if country_code:
         query = f"{query},{country_code.strip()}"
 
+    # Open-Meteo uses metric; convert to imperial if requested
+    want_imperial = units.lower().startswith("imp")
+
     # Geocode the city to lat/lon
     geocode_url = "https://geocoding-api.open-meteo.com/v1/search"
-    async with httpx.AsyncClient() as client:
+    weather_url = "https://api.open-meteo.com/v1/forecast"
+    async with httpx.AsyncClient(timeout=10) as client:
         geocode_resp = await client.get(geocode_url, params={"name": query, "count": 1})
         geocode_resp.raise_for_status()
         geocode_data = geocode_resp.json()
@@ -113,20 +122,25 @@ async def get_weather(
         name = location.get("name", city)
         country = location.get("country", country_code or "")
 
-        # Fetch current weather
-        weather_url = "https://api.open-meteo.com/v1/forecast"
-        weather_resp = await client.get(
-            weather_url,
-            params={
-                "latitude": lat,
-                "longitude": lon,
-                "current_weather": True,
-            },
-        )
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "current_weather": True,
+        }
+        weather_resp = await client.get(weather_url, params=params)
         weather_resp.raise_for_status()
         weather_data = weather_resp.json()
 
-    current = weather_data.get("current_weather", {})
+    current = weather_data.get("current_weather", {}) or {}
+    # Normalize units if imperial requested
+    temp_c = current.get("temperature")
+    wind_ms = current.get("windspeed")
+    if want_imperial:
+        if temp_c is not None:
+            current["temperature_f"] = round((temp_c * 9 / 5) + 32, 1)
+        if wind_ms is not None:
+            current["windspeed_mph"] = round(wind_ms * 2.23694, 1)
+
     return {
         "location": {
             "name": name,
@@ -135,6 +149,8 @@ async def get_weather(
             "longitude": lon,
         },
         "current_weather": current,
+        "units": "imperial" if want_imperial else "metric",
+        "source": "open-meteo.com (no API key required)",
     }
 
 # Run with specific transport
