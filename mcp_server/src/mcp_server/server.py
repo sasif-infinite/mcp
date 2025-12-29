@@ -7,7 +7,6 @@ from typing import Annotated
 
 import httpx
 from arcade_mcp_server import Context, MCPApp, mcp_app as arcade_mcp_app_module
-from arcade_mcp_server.auth import Reddit
 from arcade_mcp_server.worker import create_arcade_mcp as _create_arcade_mcp
 from fastapi.middleware.cors import CORSMiddleware
 from arcade_mcp_server import types as arcade_mcp_types
@@ -36,7 +35,7 @@ app = MCPApp(name="mcp_server", version="1.0.0", log_level="DEBUG")
 register_infinite_tools(app)
 
 
-@app.tool
+@app.tool(name="greet")
 def greet(name: Annotated[str, "The name of the person to greet"]) -> str:
     """Greet a person by name."""
     return f"Hello, {name}!"
@@ -44,7 +43,7 @@ def greet(name: Annotated[str, "The name of the person to greet"]) -> str:
 
 # To use this tool locally, you need to either set the secret in the .env file or as an environment variable.
 # We avoid `requires_secrets` so the tool remains callable over the HTTP transport used by OAP.
-@app.tool
+@app.tool(name="secret")
 def whisper_secret(
     context: Context,
 ) -> Annotated[str, "The last 4 characters of the secret"]:
@@ -74,37 +73,7 @@ def whisper_secret(
 
     return "The last 4 characters of the secret are: " + secret[-4:]
 
-# To use this tool locally, you need to install the Arcade CLI (uv tool install arcade-mcp)
-# and then run 'arcade login' to authenticate.
-@app.tool(requires_auth=Reddit(scopes=["read"]))
-async def get_posts_in_subreddit(
-    context: Context, subreddit: Annotated[str, "The name of the subreddit"]
-) -> dict:
-    """Get posts from a specific subreddit"""
-    # Normalize the subreddit name
-    subreddit = subreddit.lower().replace("r/", "").replace(" ", "")
-
-    # Prepare the httpx request
-    # OAuth token is injected into the context at runtime.
-    # LLMs and MCP clients cannot see or access your OAuth tokens.
-    oauth_token = context.get_auth_token_or_empty()
-    headers = {
-        "Authorization": f"Bearer {oauth_token}",
-        "User-Agent": "mcp_server-mcp-server",
-    }
-    params = {"limit": 5}
-    url = f"https://oauth.reddit.com/r/{subreddit}/hot"
-
-    # Make the request
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers, params=params)
-        response.raise_for_status()
-
-        # Return the response
-        return response.json()
-
-
-@app.tool
+@app.tool(name="weather")
 async def get_weather(
     city: Annotated[str, "City name (optionally include state/country)"]
 ) -> str:
