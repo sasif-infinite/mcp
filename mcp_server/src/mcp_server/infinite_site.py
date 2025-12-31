@@ -57,12 +57,42 @@ def _clean_url(url: str) -> str:
     return url.split("#", 1)[0].rstrip("/")
 
 
+_STATIC_SUFFIXES = {
+    ".css",
+    ".js",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".gif",
+    ".mp4",
+    ".mp3",
+    ".pdf",
+    ".zip",
+}
+
+
+def _is_static_asset(url: str) -> bool:
+    path = urlparse(url).path.lower()
+    return any(path.endswith(suffix) for suffix in _STATIC_SUFFIXES)
+
+
 def _extract_links(html: str, base: str) -> set[str]:
     html = html[:200000]  # Limit parsing to keep regex fast on very large pages.
     links = set()
     for href in re.findall(r'href=["\'](.*?)["\']', html, flags=re.IGNORECASE):
         absolute = _clean_url(urljoin(base, href))
-        if absolute.startswith(BASE_URL) and _same_origin(absolute):
+        if (
+            absolute.startswith(BASE_URL)
+            and _same_origin(absolute)
+            and not _is_static_asset(absolute)
+        ):
             links.add(absolute)
     return links
 
@@ -82,10 +112,50 @@ def _extract_text(html: str) -> str:
     return parser.get_text()
 
 
+def _extract_meta_and_headings(html: str) -> list[str]:
+    """Pull meta descriptions and top headings to improve snippets."""
+    highlights: list[str] = []
+
+    # Meta description or og:description
+    meta_match = re.search(
+        r'<meta[^>]+(?:name|property)=["\'](?:description|og:description)["\'][^>]*?content=["\'](.*?)["\']',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if meta_match and meta_match.group(1):
+        highlights.append(meta_match.group(1).strip())
+
+    # Top H1/H2/H3 headings
+    heading_matches = re.findall(
+        r"<h[1-3][^>]*>(.*?)</h[1-3]>",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for heading in heading_matches[:4]:
+        cleaned = re.sub(r"(?is)<[^>]+>", " ", heading).strip()
+        if cleaned:
+            highlights.append(cleaned)
+
+    return highlights
+
+
+def _build_snippet(html: str, text: str) -> str:
+    parts = _extract_meta_and_headings(html)
+    if text:
+        parts.append(text[:400])
+    snippet = " ".join(parts).strip()
+    return snippet[:320] if snippet else text[:320]
+
+
 async def _fetch(url: str, client: httpx.AsyncClient) -> tuple[str, str] | None:
+    if _is_static_asset(url):
+        return None
     try:
         resp = await client.get(url, timeout=REQUEST_TIMEOUT, follow_redirects=True)
         resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "")
+        if "text/html" not in content_type.lower():
+            return None
         return url, resp.text
     except Exception:
         return None
@@ -127,7 +197,12 @@ def _load_index_from_disk() -> None:
         pages = payload.get("pages") or []
         if isinstance(pages, list):
             _index = [
-                {"url": p.get("url", ""), "text": p.get("text", "")} for p in pages
+                {
+                    "url": p.get("url", ""),
+                    "text": p.get("text", ""),
+                    "snippet": p.get("snippet", ""),
+                }
+                for p in pages
             ]
     except Exception:
         # If loading fails, continue with empty index
@@ -183,7 +258,8 @@ async def crawl_infinite_site(
                 _, html = fetched
                 text = _extract_text(html)
                 if text:
-                    _index.append({"url": url, "text": text})
+                    snippet = _build_snippet(html, text)
+                    _index.append({"url": url, "text": text, "snippet": snippet})
 
                 for link in _extract_links(html, url):
                     if link not in _seen_urls:
@@ -199,7 +275,7 @@ async def crawl_infinite_site(
         # Prepare concise snippets for the caller to answer from without extra tool calls.
         summaries: list[dict[str, str | int]] = []
         for page in _index[: min(10, len(_index))]:
-            snippet = page["text"][:320].strip()
+            snippet = page.get("snippet") or page.get("text", "")[:320]
             summaries.append({"url": page["url"], "snippet": snippet})
 
         return {
@@ -218,8 +294,8 @@ async def crawl_infinite_site(
     except asyncio.TimeoutError:
         summaries: list[dict[str, str | int]] = []
         for page in cached_index[: min(10, len(cached_index))]:
-            snippet = page["text"][:320].strip()
-            summaries.append({"url": page["url"], "snippet": snippet})
+            snippet = page.get("snippet") or page.get("text", "")[:320]
+            summaries.append({"url": page.get("url", ""), "snippet": snippet})
         return {
             "status": "timeout",
             "pages_indexed": len(cached_index),
