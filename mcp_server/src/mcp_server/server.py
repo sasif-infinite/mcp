@@ -114,7 +114,7 @@ class CustomMCPServer(ArcadeMCPServer):
                 )
         except httpx.HTTPError:
             return []
-        if not response.ok:
+        if not response.is_success:
             return []
         try:
             payload = response.json()
@@ -165,7 +165,7 @@ class CustomMCPServer(ArcadeMCPServer):
         except ValueError:
             payload = response.text
 
-        if not response.ok:
+        if not response.is_success:
             message = (
                 payload.get("detail")
                 if isinstance(payload, dict)
