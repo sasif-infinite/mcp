@@ -238,6 +238,12 @@ arcade_mcp_app_module.create_arcade_mcp = create_arcade_mcp_with_cors
 
 app = MCPApp(name="mcp_server", version="1.0.0", log_level="DEBUG")
 
+# Keep at least one tool registered so the MCP server can start.
+@app.tool
+def healthcheck() -> dict:
+    """Minimal no-op tool to satisfy server startup requirements."""
+    return {"status": "ok"}
+
 # Run with specific transport
 if __name__ == "__main__":
     # Decide transport/host/port from flags or environment so Docker can bind to 0.0.0.0.
