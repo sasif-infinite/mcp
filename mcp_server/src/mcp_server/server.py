@@ -3,7 +3,7 @@
 
 import os
 import sys
-from typing import Any
+from typing import Any, Annotated
 
 import httpx
 from arcade_mcp_server import MCPApp, mcp_app as arcade_mcp_app_module
@@ -240,7 +240,7 @@ app = MCPApp(name="mcp_server", version="1.0.0", log_level="DEBUG")
 
 # Keep at least one tool registered so the MCP server can start.
 @app.tool
-def healthcheck(message: str = "pong") -> dict:
+def healthcheck(message: Annotated[str, "Echo payload"] = "pong") -> dict:
     """Lightweight echo for smoke testing tool calls."""
     return {"status": "ok", "echo": message}
 
