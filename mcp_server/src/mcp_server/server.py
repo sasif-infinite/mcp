@@ -240,9 +240,9 @@ app = MCPApp(name="mcp_server", version="1.0.0", log_level="DEBUG")
 
 # Keep at least one tool registered so the MCP server can start.
 @app.tool
-def healthcheck() -> dict:
-    """Minimal no-op tool to satisfy server startup requirements."""
-    return {"status": "ok"}
+def healthcheck(message: str = "pong") -> dict:
+    """Lightweight echo for smoke testing tool calls."""
+    return {"status": "ok", "echo": message}
 
 # Run with specific transport
 if __name__ == "__main__":
